@@ -1,4 +1,4 @@
-name: metagenomic_pipeline
+name: MG-Proc
 channels:
   - conda-forge
   - bioconda

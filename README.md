@@ -23,8 +23,8 @@ This repository contains scripts for quality checking, preprocessing, assembling
 
 **Clone the repository**:  
 ```bash
-git clone https://github.com/pereiramemo/metagenomic_pipelines.git
-cd metagenomic_pipelines
+git clone https://github.com/pereiramemo/MG-Proc.git
+cd MG-Proc
 ```
 
 **Installation with mamba**:  
@@ -50,7 +50,7 @@ mamba env create -f environment.yml
 
 Then activate the environment:
 ```bash
-mamba activate metagenomic_pipeline
+mamba activate MG-Proc
 ```
 
 # **How to use**
