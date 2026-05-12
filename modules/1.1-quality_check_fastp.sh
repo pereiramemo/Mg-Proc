@@ -34,11 +34,11 @@ Options:
     --single_end=t|f
         Process single-end reads instead of paired-end [default=f]
 
-    --pattern_r1=CHAR
+    --r1_pattern=CHAR
         Pattern for R1 FASTQ files, or single-end files when --single_end=t
         [default=_R1_001.fastq.gz]
 
-    --pattern_r2=CHAR
+    --r2_pattern=CHAR
         Pattern for R2 FASTQ files (ignored when --single_end=t)
         [default=_R2_001.fastq.gz]
 
@@ -77,14 +77,14 @@ Examples:
         --input_dir=raw_data/ \\
         --output_dir=results/qc_reports \\
         --single_end=t \\
-        --pattern_r1=.fastq.gz
+        --r1_pattern=.fastq.gz
 
     # Custom paired-end settings
     $(basename "$0") \\
         --input_dir=raw_data/ \\
         --output_dir=results/qc_reports \\
-        --pattern_r1=_1.fq.gz \\
-        --pattern_r2=_2.fq.gz \\
+        --r1_pattern=_1.fq.gz \\
+        --r2_pattern=_2.fq.gz \\
         --nslots=16 \\
         --min_length=75
 
@@ -98,8 +98,8 @@ EOF
 INPUT_DIR=""
 OUTPUT_DIR=""
 SINGLE_END="f"
-PATTERN_R1="_R1_001.fastq.gz"
-PATTERN_R2="_R2_001.fastq.gz"
+R1_PATTERN="_R1_001.fastq.gz"
+R2_PATTERN="_R2_001.fastq.gz"
 NSLOTS=12
 MIN_LENGTH=50
 QUALIFIED_QUALITY_PHRED=20
@@ -120,7 +120,7 @@ fi
 
 ARGS=$(
   getopt -o h \
-  -l help,input_dir:,output_dir:,single_end:,pattern_r1:,pattern_r2:,nslots:,min_length:,\
+  -l help,input_dir:,output_dir:,single_end:,r1_pattern:,r2_pattern:,nslots:,min_length:,\
 qualified_quality_phred:,unqualified_percent_limit:,disable_adapter_trimming:,\
 html_report:,json_report:,overwrite: \
   -n "$(basename "$0")" -- "$@" \
@@ -138,8 +138,8 @@ while true; do
     --input_dir) INPUT_DIR="$2"; shift 2 ;;
     --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
     --single_end) SINGLE_END="$2"; shift 2 ;;
-    --pattern_r1) PATTERN_R1="$2"; shift 2 ;;
-    --pattern_r2) PATTERN_R2="$2"; shift 2 ;;
+    --r1_pattern) R1_PATTERN="$2"; shift 2 ;;
+    --r2_pattern) R2_PATTERN="$2"; shift 2 ;;
     --nslots) NSLOTS="$2"; shift 2 ;;
     --min_length) MIN_LENGTH="$2"; shift 2 ;;
     --qualified_quality_phred) QUALIFIED_QUALITY_PHRED="$2"; shift 2 ;;
@@ -223,18 +223,18 @@ mkdir -p "${OUTPUT_DIR}/stats"
 log "Searching for input files..."
 
 # Use arrays to hold file paths
-readarray -t R1_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${PATTERN_R1}" | sort)
+readarray -t R1_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${R1_PATTERN}" | sort)
 
 if [[ ${#R1_FILES[@]} -eq 0 ]]; then
-    log_error "No files found with pattern: *${PATTERN_R1}"
+    log_error "No files found with pattern: *${R1_PATTERN}"
     exit 1
 fi
 
 if [[ "${SINGLE_END}" == "f" ]]; then
-    readarray -t R2_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${PATTERN_R2}" | sort)
+    readarray -t R2_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${R2_PATTERN}" | sort)
 
     if [[ ${#R2_FILES[@]} -eq 0 ]]; then
-        log_error "No R2 files found with pattern: *${PATTERN_R2}"
+        log_error "No R2 files found with pattern: *${R2_PATTERN}"
         exit 1
     fi
 
@@ -259,7 +259,7 @@ for i in "${!R1_FILES[@]}"; do
     R1="${R1_FILES[$i]}"
 
     # Extract sample name by removing pattern
-    SAMPLE_NAME=$(basename "${R1}" "${PATTERN_R1}")
+    SAMPLE_NAME=$(basename "${R1}" "${R1_PATTERN}")
 
     log "Processing sample ${SAMPLE_NAME} ($(( i + 1 ))/${#R1_FILES[@]})..."
 
@@ -370,8 +370,8 @@ Number of samples: ${#R1_FILES[@]}
 Parameters:
 -----------
 Read type: $([ "${SINGLE_END}" == "t" ] && echo "single-end" || echo "paired-end")
-Pattern R1: ${PATTERN_R1}
-$([ "${SINGLE_END}" == "f" ] && echo "Pattern R2: ${PATTERN_R2}")
+Pattern R1: ${R1_PATTERN}
+$([ "${SINGLE_END}" == "f" ] && echo "Pattern R2: ${R2_PATTERN}")
 Threads: ${NSLOTS}
 Mode: Report only (no filtering applied)
 Adapter trimming: $([ "${DISABLE_ADAPTER_TRIMMING}" == "f" ] && echo "enabled" || echo "disabled")
