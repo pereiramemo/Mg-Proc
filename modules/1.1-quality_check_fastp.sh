@@ -31,11 +31,16 @@ Options:
     --output_dir=CHAR
         Directory to output generated data (QC reports and plots) (required)
 
+    --single_end=t|f
+        Process single-end reads instead of paired-end [default=f]
+
     --pattern_r1=CHAR
-        Pattern for R1 FASTQ files [default=_R1_001.fastq.gz]
+        Pattern for R1 FASTQ files, or single-end files when --single_end=t
+        [default=_R1_001.fastq.gz]
 
     --pattern_r2=CHAR
-        Pattern for R2 FASTQ files [default=_R2_001.fastq.gz]
+        Pattern for R2 FASTQ files (ignored when --single_end=t)
+        [default=_R2_001.fastq.gz]
 
     --nslots=NUM
         Number of threads to use [default=12]
@@ -62,12 +67,19 @@ Options:
         Overwrite previous directory [default=f]
 
 Examples:
-    # Basic usage
+    # Paired-end (default)
     $(basename "$0") \\
         --input_dir=raw_data/ \\
         --output_dir=results/qc_reports
 
-    # Custom settings
+    # Single-end
+    $(basename "$0") \\
+        --input_dir=raw_data/ \\
+        --output_dir=results/qc_reports \\
+        --single_end=t \\
+        --pattern_r1=.fastq.gz
+
+    # Custom paired-end settings
     $(basename "$0") \\
         --input_dir=raw_data/ \\
         --output_dir=results/qc_reports \\
@@ -85,6 +97,7 @@ EOF
 
 INPUT_DIR=""
 OUTPUT_DIR=""
+SINGLE_END="f"
 PATTERN_R1="_R1_001.fastq.gz"
 PATTERN_R2="_R2_001.fastq.gz"
 NSLOTS=12
@@ -107,7 +120,7 @@ fi
 
 ARGS=$(
   getopt -o h \
-  -l help,input_dir:,output_dir:,pattern_r1:,pattern_r2:,nslots:,min_length:,\
+  -l help,input_dir:,output_dir:,single_end:,pattern_r1:,pattern_r2:,nslots:,min_length:,\
 qualified_quality_phred:,unqualified_percent_limit:,disable_adapter_trimming:,\
 html_report:,json_report:,overwrite: \
   -n "$(basename "$0")" -- "$@" \
@@ -124,6 +137,7 @@ while true; do
     -h|--help) show_usage; exit 0 ;;
     --input_dir) INPUT_DIR="$2"; shift 2 ;;
     --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --single_end) SINGLE_END="$2"; shift 2 ;;
     --pattern_r1) PATTERN_R1="$2"; shift 2 ;;
     --pattern_r2) PATTERN_R2="$2"; shift 2 ;;
     --nslots) NSLOTS="$2"; shift 2 ;;
@@ -161,7 +175,7 @@ if [[ ! -d "${INPUT_DIR}" ]]; then
 fi
 
 # Validate boolean flags
-for flag in DISABLE_ADAPTER_TRIMMING HTML_REPORT JSON_REPORT OVERWRITE; do
+for flag in SINGLE_END DISABLE_ADAPTER_TRIMMING HTML_REPORT JSON_REPORT OVERWRITE; do
     if ! [[ "${!flag}" =~ ^[tf]$ ]]; then
         log_error "Flag --$(echo "${flag}" | tr 'A-Z_' 'a-z-') must be 't' or 'f' (got '${!flag}')."
         exit 1
@@ -210,24 +224,29 @@ log "Searching for input files..."
 
 # Use arrays to hold file paths
 readarray -t R1_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${PATTERN_R1}" | sort)
-readarray -t R2_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${PATTERN_R2}" | sort)
 
 if [[ ${#R1_FILES[@]} -eq 0 ]]; then
-    log_error "No R1 files found with pattern: *${PATTERN_R1}"
+    log_error "No files found with pattern: *${PATTERN_R1}"
     exit 1
 fi
 
-if [[ ${#R2_FILES[@]} -eq 0 ]]; then
-    log_error "No R2 files found with pattern: *${PATTERN_R2}"
-    exit 1
-fi
+if [[ "${SINGLE_END}" == "f" ]]; then
+    readarray -t R2_FILES < <(find "${INPUT_DIR}" -maxdepth 1 -type f -name "*${PATTERN_R2}" | sort)
 
-if [[ ${#R1_FILES[@]} -ne ${#R2_FILES[@]} ]]; then
-    log_error "Number of R1 and R2 files do not match (R1: ${#R1_FILES[@]}, R2: ${#R2_FILES[@]})"
-    exit 1
-fi
+    if [[ ${#R2_FILES[@]} -eq 0 ]]; then
+        log_error "No R2 files found with pattern: *${PATTERN_R2}"
+        exit 1
+    fi
 
-log "Found ${#R1_FILES[@]} sample pairs"
+    if [[ ${#R1_FILES[@]} -ne ${#R2_FILES[@]} ]]; then
+        log_error "Number of R1 and R2 files do not match (R1: ${#R1_FILES[@]}, R2: ${#R2_FILES[@]})"
+        exit 1
+    fi
+
+    log "Found ${#R1_FILES[@]} sample pairs"
+else
+    log "Found ${#R1_FILES[@]} single-end samples"
+fi
 
 ###############################################################################
 # 9. Process samples
@@ -238,69 +257,71 @@ echo -e "sample\ttotal_reads_before\ttotal_bases_before\tq20_bases_before\tq30_b
 
 for i in "${!R1_FILES[@]}"; do
     R1="${R1_FILES[$i]}"
-    R2="${R2_FILES[$i]}"
-    
+
     # Extract sample name by removing pattern
     SAMPLE_NAME=$(basename "${R1}" "${PATTERN_R1}")
-    
+
     log "Processing sample ${SAMPLE_NAME} ($(( i + 1 ))/${#R1_FILES[@]})..."
-    
-    echo $R1
-    echo $R2
+
     # Define output files
     HTML_OUT="${OUTPUT_DIR}/reports/${SAMPLE_NAME}_fastp.html"
     JSON_OUT="${OUTPUT_DIR}/reports/${SAMPLE_NAME}_fastp.json"
-    
+
     # Build fastp command (report only mode)
     FASTP_CMD=(
         fastp
         -i "${R1}"
-        -I "${R2}"
         -w "${NSLOTS}"
         --disable_quality_filtering
         --disable_length_filtering
         --disable_trim_poly_g
     )
-    
+
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        R2="${R2_FILES[$i]}"
+        FASTP_CMD+=(-I "${R2}")
+    fi
+
     # Add HTML report if requested
     if [[ "${HTML_REPORT}" == "t" ]]; then
         FASTP_CMD+=(--html "${HTML_OUT}")
     else
         FASTP_CMD+=(--html /dev/null)
     fi
-    
+
     # Add JSON report if requested
     if [[ "${JSON_REPORT}" == "t" ]]; then
         FASTP_CMD+=(--json "${JSON_OUT}")
     else
         FASTP_CMD+=(--json /dev/null)
     fi
-    
+
     # Disable adapter trimming if requested
     if [[ "${DISABLE_ADAPTER_TRIMMING}" == "t" ]]; then
         FASTP_CMD+=(--disable_adapter_trimming)
     fi
-    
-    # Don't output processed reads (report only mode)
-    # Create temporary files for outputs
-    TEMP_OUT_R1="${OUTPUT_DIR}/reports/${SAMPLE_NAME}_temp_R1.fastq.gz"
-    TEMP_OUT_R2="${OUTPUT_DIR}/reports/${SAMPLE_NAME}_temp_R2.fastq.gz"
 
-    FASTP_CMD+=(
-        -o "${TEMP_OUT_R1}"
-        -O "${TEMP_OUT_R2}"
-    )
+    # Don't output processed reads (report only mode)
+    # Create temporary output file(s)
+    TEMP_OUT_R1="${OUTPUT_DIR}/reports/${SAMPLE_NAME}_temp_R1.fastq.gz"
+    FASTP_CMD+=(-o "${TEMP_OUT_R1}")
+
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        TEMP_OUT_R2="${OUTPUT_DIR}/reports/${SAMPLE_NAME}_temp_R2.fastq.gz"
+        FASTP_CMD+=(-O "${TEMP_OUT_R2}")
+    fi
 
     # Run fastp
     if ! "${FASTP_CMD[@]}" 2>&1 | tee "${OUTPUT_DIR}/reports/${SAMPLE_NAME}_fastp.log"; then
         log_error "fastp failed for sample ${SAMPLE_NAME}"
-        # Clean up temporary files on failure
-        rm -f "${TEMP_OUT_R1}" "${TEMP_OUT_R2}"
+        rm -f "${TEMP_OUT_R1}"
+        [[ "${SINGLE_END}" == "f" ]] && rm -f "${TEMP_OUT_R2}"
         exit 1
     fi
 
     # Remove temporary output files after successful completion
-    rm -f "${TEMP_OUT_R1}" "${TEMP_OUT_R2}"
+    rm -f "${TEMP_OUT_R1}"
+    [[ "${SINGLE_END}" == "f" ]] && rm -f "${TEMP_OUT_R2}"
     
     # Extract summary statistics from JSON if available
     if [[ "${JSON_REPORT}" == "t" && -f "${JSON_OUT}" ]]; then
@@ -348,8 +369,9 @@ Number of samples: ${#R1_FILES[@]}
 
 Parameters:
 -----------
+Read type: $([ "${SINGLE_END}" == "t" ] && echo "single-end" || echo "paired-end")
 Pattern R1: ${PATTERN_R1}
-Pattern R2: ${PATTERN_R2}
+$([ "${SINGLE_END}" == "f" ] && echo "Pattern R2: ${PATTERN_R2}")
 Threads: ${NSLOTS}
 Mode: Report only (no filtering applied)
 Adapter trimming: $([ "${DISABLE_ADAPTER_TRIMMING}" == "f" ] && echo "enabled" || echo "disabled")
