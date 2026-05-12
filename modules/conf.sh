@@ -1,6 +1,6 @@
 ###############################################################################
 # conf.sh
-# Configuration file for metagenomic pipeline
+# Configuration file for MG-Proc pipeline
 ###############################################################################
 
 
@@ -8,17 +8,17 @@
 # Load conda environment
 ###############################################################################
 
-# Check if metagenomic_pipeline environment is activated, if not, activate it
-if [[ "${CONDA_DEFAULT_ENV}" != "metagenomic_pipeline" ]]; then
-  echo "Activating metagenomic_pipeline conda environment..."
+# Check if MG-Proc environment is activated, if not, activate it
+if [[ "${CONDA_DEFAULT_ENV}" != "MG-Proc" ]]; then
+  echo "Activating MG-Proc conda environment..."
   
   # Try to find conda/mamba
   if command -v mamba &> /dev/null; then
     eval "$(mamba shell.bash hook)"
-    mamba activate metagenomic_pipeline
+    mamba activate MG-Proc
   elif command -v conda &> /dev/null; then
     eval "$(conda shell.bash hook)"
-    conda activate metagenomic_pipeline
+    conda activate MG-Proc
   else
     echo "ERROR: Neither mamba nor conda found in PATH"
     echo "Please install mamba or conda and ensure it's in your PATH"
@@ -26,8 +26,8 @@ if [[ "${CONDA_DEFAULT_ENV}" != "metagenomic_pipeline" ]]; then
   fi
   
   # Verify activation was successful
-  if [[ "${CONDA_DEFAULT_ENV}" != "metagenomic_pipeline" ]]; then
-    echo "ERROR: Failed to activate metagenomic_pipeline environment"
+  if [[ "${CONDA_DEFAULT_ENV}" != "MG-Proc" ]]; then
+    echo "ERROR: Failed to activate MG-Proc environment"
     echo "Please ensure the environment exists. Create it with:"
     echo "  mamba env create -f environment.yml"
     exit 1
@@ -68,7 +68,7 @@ picard="picard" # Assuming picard is available as a command (e.g., via conda), o
 ADAPTERS=$(find "${CONDA_PREFIX}/opt/bbmap"* -name "adapters.fa")
 if [[ ! -f "${ADAPTERS}" ]]; then
   echo "ERROR: BBMap adapters file not found at expected location: ${ADAPTERS}"
-  echo "Please ensure BBMap is installed in the metagenomic_pipeline conda environment."
+  echo "Please ensure BBMap is installed in the MG-Proc mamba environment."
 fi
 
 ###############################################################################
@@ -150,8 +150,8 @@ function check_dependencies {
     log_error "The following required tools are not installed or not in PATH:"
     printf '  - %s\n' "${missing_tools[@]}" >&2
     log_error ""
-    log_error "Please activate the metagenomic_pipeline conda environment:"
-    log_error "  mamba activate metagenomic_pipeline"
+    log_error "Please activate the MG-Proc mamba environment:"
+    log_error "  mamba activate MG-Proc"
     return 1
   fi
   
