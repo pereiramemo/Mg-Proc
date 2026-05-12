@@ -19,16 +19,26 @@ option_list <- list(
               help="Output directory for plots", metavar="character"),
   make_option(c("--nslots"), type="integer", default=12,
               help="Number of threads to use [default=%default]", metavar="integer"),
+  make_option(c("--single_end"), type="character", default="FALSE",
+              help="Process single-end reads instead of paired-end [default=%default]", metavar="logical"),
   make_option(c("--r1_pattern"), type="character", default="R1_001.fastq.gz",
-              help="Pattern for R1 FASTQ files [default=%default]", metavar="character"),
+              help="Pattern for R1 FASTQ files, or single-end files when --single_end=TRUE [default=%default]", metavar="character"),
   make_option(c("--r2_pattern"), type="character", default="R2_001.fastq.gz",
-              help="Pattern for R2 FASTQ files [default=%default]", metavar="character"),
-  make_option(c("--overwrite"), type="logical", default=FALSE,
+              help="Pattern for R2 FASTQ files (ignored when --single_end=TRUE) [default=%default]", metavar="character"),
+  make_option(c("--overwrite"), type="character", default="FALSE",
               help="Overwrite previous output [default=%default]", metavar="logical")
 )
 
 opt_parser <- OptionParser(option_list=option_list)
 opt <- parse_args(opt_parser)
+
+parse_bool <- function(x, flag) {
+  if (tolower(x) %in% c("t", "true"))  return(TRUE)
+  if (tolower(x) %in% c("f", "false")) return(FALSE)
+  stop(paste0("--", flag, " must be TRUE/FALSE (got '", x, "')"), call.=FALSE)
+}
+opt$single_end <- parse_bool(opt$single_end, "single_end")
+opt$overwrite  <- parse_bool(opt$overwrite,  "overwrite")
 
 # Check required arguments
 if (is.null(opt$input_dir) || is.null(opt$output_dir)) {
@@ -74,41 +84,49 @@ INPUT_DIR <- opt$input_dir
 OUTPUT_DIR <- opt$output_dir
 NSLOTS <- opt$nslots
 registerDoParallel(cores = NSLOTS)
+SINGLE_END <- opt$single_end
 PATTERN_R1 <- opt$r1_pattern
 PATTERN_R2 <- opt$r2_pattern
 
 rawR1 <- sort(list.files(INPUT_DIR, pattern = PATTERN_R1, full.names = T))
-rawR2 <- sort(list.files(INPUT_DIR, pattern = PATTERN_R2, full.names = T))
 
 # Check if files were found
 if (length(rawR1) == 0) {
-  stop(paste("Error: No R1 files found matching pattern:", PATTERN_R1), call.=FALSE)
-}
-if (length(rawR2) == 0) {
-  stop(paste("Error: No R2 files found matching pattern:", PATTERN_R2), call.=FALSE)
+  stop(paste("Error: No files found matching pattern:", PATTERN_R1), call.=FALSE)
 }
 
-# Check if R1 and R2 have same number of files
-if (length(rawR1) != length(rawR2)) {
-  stop(paste("Error: Mismatch in number of files. R1:", length(rawR1), "R2:", length(rawR2)), call.=FALSE)
-}
+if (!SINGLE_END) {
+  rawR2 <- sort(list.files(INPUT_DIR, pattern = PATTERN_R2, full.names = T))
 
-message(paste("Found", length(rawR1), "R1 files and", length(rawR2), "R2 files"))
+  if (length(rawR2) == 0) {
+    stop(paste("Error: No R2 files found matching pattern:", PATTERN_R2), call.=FALSE)
+  }
+
+  if (length(rawR1) != length(rawR2)) {
+    stop(paste("Error: Mismatch in number of files. R1:", length(rawR1), "R2:", length(rawR2)), call.=FALSE)
+  }
+
+  message(paste("Found", length(rawR1), "R1 files and", length(rawR2), "R2 files"))
+} else {
+  message(paste("Found", length(rawR1), "single-end files"))
+}
 
 # Helper function to extract sample names consistently
 extract_sample_name <- function(filepath, pattern) {
   basename(filepath) %>% sub(pattern = pattern, replacement = "", fixed = FALSE)
 }
 
-# Extract sample names from R1 and R2
+# Extract sample names from R1 (and verify R2 match in paired-end mode)
 SAMPLE_NAMES_R1 <- sapply(rawR1, function(x) extract_sample_name(x, PATTERN_R1))
-SAMPLE_NAMES_R2 <- sapply(rawR2, function(x) extract_sample_name(x, PATTERN_R2))
 
-# Verify that R1 and R2 sample names match
-if (!all(SAMPLE_NAMES_R1 == SAMPLE_NAMES_R2)) {
-  warning("Sample names extracted from R1 and R2 files don't match perfectly. Check your pattern parameters.")
-  message("R1 samples: ", paste(head(SAMPLE_NAMES_R1), collapse=", "))
-  message("R2 samples: ", paste(head(SAMPLE_NAMES_R2), collapse=", "))
+if (!SINGLE_END) {
+  SAMPLE_NAMES_R2 <- sapply(rawR2, function(x) extract_sample_name(x, PATTERN_R2))
+
+  if (!all(SAMPLE_NAMES_R1 == SAMPLE_NAMES_R2)) {
+    warning("Sample names extracted from R1 and R2 files don't match perfectly. Check your pattern parameters.")
+    message("R1 samples: ", paste(head(SAMPLE_NAMES_R1), collapse=", "))
+    message("R2 samples: ", paste(head(SAMPLE_NAMES_R2), collapse=", "))
+  }
 }
 
 SAMPLE_NAMES <- SAMPLE_NAMES_R1
@@ -159,27 +177,29 @@ ggsave(p_r1, filename = file_p_r1,
 ### 8. R2 quality vs nseq
 ###############################################################################
 
-x_r2 <- qa(dirPath = INPUT_DIR, pattern = PATTERN_R2, sample = T, n = 5000)
-qa_df <- x_r2[["perCycle"]][["quality"]]
-qa_means <- qa_df %>%
-            group_by(lane) %>%
-            summarize(mean_q = sum(Score*Count)/sum(Count))
+if (!SINGLE_END) {
+  x_r2 <- qa(dirPath = INPUT_DIR, pattern = PATTERN_R2, sample = T, n = 5000)
+  qa_df <- x_r2[["perCycle"]][["quality"]]
+  qa_means <- qa_df %>%
+              group_by(lane) %>%
+              summarize(mean_q = sum(Score*Count)/sum(Count))
 
-# Extract sample names consistently using the pattern
-qa_means$lane <- sapply(qa_means$lane, function(x) extract_sample_name(x, PATTERN_R2))
-qa_means2counts <- left_join(x = qa_means, y = seq_counts_df, by = c("lane" = "sample"))
+  # Extract sample names consistently using the pattern
+  qa_means$lane <- sapply(qa_means$lane, function(x) extract_sample_name(x, PATTERN_R2))
+  qa_means2counts <- left_join(x = qa_means, y = seq_counts_df, by = c("lane" = "sample"))
 
-text_size <- 2
-p_r2 <- ggplot(data = qa_means2counts, aes(x = mean_q, y = nseq)) +
-        geom_point() +
-        scale_y_log10() +
-        ylab("Read counts (log)") +
-        xlab("Mean quality score (R2)") +
-        geom_text(aes(label=as.character(lane)), hjust=0.5, vjust=-1, size = text_size)
+  text_size <- 2
+  p_r2 <- ggplot(data = qa_means2counts, aes(x = mean_q, y = nseq)) +
+          geom_point() +
+          scale_y_log10() +
+          ylab("Read counts (log)") +
+          xlab("Mean quality score (R2)") +
+          geom_text(aes(label=as.character(lane)), hjust=0.5, vjust=-1, size = text_size)
 
-file_p_r2 <- paste(OUTPUT_DIR,"r2_mean_q_vs_nseq.png", sep = "/")
-ggsave(p_r2, filename = file_p_r2, 
-       device = "png", width = 5, height = 4, dpi = 300)
+  file_p_r2 <- paste(OUTPUT_DIR,"r2_mean_q_vs_nseq.png", sep = "/")
+  ggsave(p_r2, filename = file_p_r2,
+         device = "png", width = 5, height = 4, dpi = 300)
+}
 
 ###############################################################################
 ### 9. Plot nseq hist
@@ -268,7 +288,7 @@ message("\n=== Quality check plots completed successfully ===")
 message(paste("Output directory:", OUTPUT_DIR))
 message("Generated plots:")
 message("  - r1_mean_q_vs_nseq.png")
-message("  - r2_mean_q_vs_nseq.png")
+if (!SINGLE_END) message("  - r2_mean_q_vs_nseq.png")
 message("  - samples_hist.png")
 message("  - samples_hist_log.png")
 message("  - samples_perc_phix_barplot.png")
